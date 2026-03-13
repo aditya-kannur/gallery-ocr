@@ -1,15 +1,23 @@
 import { useState, useEffect } from 'react';
 import {
-  View, Text, TextInput, FlatList, Image,
-  StyleSheet, SafeAreaView, TouchableOpacity, Platform
+  View, Text, TextInput, StyleSheet,
+  SafeAreaView, TouchableOpacity, Platform
 } from 'react-native';
-import { indexGallery, IndexingProgress } from './app/lib/ocr';
-import ImageViewer from './app/components/ImageViewer';
-import ImageGrid from './app/components/ImageGrid';
+import { Ionicons } from '@expo/vector-icons';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { initDatabase, searchImages, getIndexStats, getTextForImage, SearchResult } from './app/lib/database';
+import { indexGallery, IndexingProgress } from './app/lib/ocr';
+import ImageGrid from './app/components/ImageGrid';
+import ImageViewer from './app/components/ImageViewer';
+import SettingsScreen from './app/components/SettingsScreen';
 
+const Tab = createBottomTabNavigator();
 
-export default function App() {
+// Shared progress state lives here so both tabs can see it
+let globalProgressCallback: ((p: IndexingProgress) => void) | null = null;
+
+function SearchTab() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [progress, setProgress] = useState<IndexingProgress | null>(null);
@@ -23,7 +31,6 @@ export default function App() {
       const s = await getIndexStats();
       setStats(s);
 
-      // Only run indexer on device, not web
       if (Platform.OS !== 'web') {
         indexGallery((p) => {
           setProgress(p);
@@ -37,27 +44,22 @@ export default function App() {
     setup().catch(console.error);
   }, []);
 
-  // Run search whenever query changes
   useEffect(() => {
-    if (query.trim().length < 2) {
-      setResults([]);
-      return;
-    }
+    if (query.trim().length < 2) { setResults([]); return; }
     searchImages(query).then(setResults).catch(console.error);
   }, [query]);
+
+  async function handleImagePress(uri: string) {
+    const text = await getTextForImage(uri);
+    setSelectedText(text);
+    setSelectedUri(uri);
+  }
 
   const statusText = () => {
     if (progress) return `Indexing... ${progress.current} / ${progress.total}`;
     if (stats.indexed > 0) return `${stats.indexed} images indexed`;
     return 'Type to search your gallery';
   };
-
-
-  async function handleImagePress(uri: string) {
-  const text = await getTextForImage(uri);
-  setSelectedText(text);
-  setSelectedUri(uri);
-}
 
   return (
     <SafeAreaView style={styles.container}>
@@ -80,27 +82,55 @@ export default function App() {
 
       <Text style={styles.statusText}>{statusText()}</Text>
 
-      {/* Progress bar — shows while indexing */}
       {progress && (
         <View style={styles.progressTrack}>
-          <View style={[
-            styles.progressFill,
-            { width: `${(progress.current / progress.total) * 100}%` }
-          ]} />
+          <View style={[styles.progressFill, { width: `${(progress.current / progress.total) * 100}%` }]} />
         </View>
       )}
 
-      <ImageGrid
-  results={results}
-  query={query}
-  onPress={handleImagePress}
-/>
+      <ImageGrid results={results} query={query} onPress={handleImagePress} />
+
       <ImageViewer
-  uri={selectedUri}
-  extractedText={selectedText}
-  onClose={() => setSelectedUri(null)}
-/>
+        uri={selectedUri}
+        extractedText={selectedText}
+        onClose={() => setSelectedUri(null)}
+      />
     </SafeAreaView>
+  );
+}
+
+export default function App() {
+  return (
+    <NavigationContainer>
+      <Tab.Navigator
+  screenOptions={({ route }) => ({
+    headerShown: false,
+    tabBarStyle: { backgroundColor: '#111', borderTopColor: '#222' },
+    tabBarActiveTintColor: '#a89ff5',
+    tabBarInactiveTintColor: '#555',
+    tabBarIcon: ({ focused, color, size }) => {
+      if (route.name === 'Search') {
+        return <Ionicons name={focused ? 'search' : 'search-outline'} size={size} color={color} />;
+      }
+      if (route.name === 'Settings') {
+        return <Ionicons name={focused ? 'settings' : 'settings-outline'} size={size} color={color} />;
+      }
+    },
+  })}
+>
+        <Tab.Screen
+          name="Search"
+          component={SearchTab}
+          options={{ tabBarLabel: 'Search' }}
+        />
+        <Tab.Screen
+          name="Settings"
+          options={{ tabBarLabel: 'Settings' }}
+        >
+          {() => <SettingsScreen onReindexStart={() => {}} />}
+        </Tab.Screen>
+      </Tab.Navigator>
+    </NavigationContainer>
   );
 }
 
@@ -114,7 +144,4 @@ const styles = StyleSheet.create({
   statusText: { color: '#555', fontSize: 13, marginHorizontal: 16, marginBottom: 6 },
   progressTrack: { height: 3, backgroundColor: '#222', marginHorizontal: 16, borderRadius: 2, marginBottom: 10 },
   progressFill: { height: 3, backgroundColor: '#7F77DD', borderRadius: 2 },
-  thumb: { width: '33.3%', aspectRatio: 1, padding: 1, backgroundColor: '#1a1a1a' },
-  emptyState: { alignItems: 'center', marginTop: 60 },
-  emptyText: { color: '#444', fontSize: 15 },
 });
