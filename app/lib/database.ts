@@ -138,3 +138,9 @@ export async function getTextForImage(uri: string): Promise<string> {
   );
   return row?.text_content ?? '';
 }
+
+// Wipes all indexed data so re-indexing starts fresh
+export async function clearIndex(): Promise<void> {
+  await db.execAsync(`DELETE FROM images;`);
+  await db.execAsync(`DELETE FROM ocr_text;`);
+}
