@@ -55,11 +55,15 @@ function SearchTab() {
     setSelectedUri(uri);
   }
 
-  const statusText = () => {
-    if (progress) return `Indexing... ${progress.current} / ${progress.total}`;
-    if (stats.indexed > 0) return `${stats.indexed} images indexed`;
-    return 'Type to search your gallery';
-  };
+const statusText = () => {
+  if (progress) {
+    if (progress.total === 0) return 'Checking for new photos...';
+    const type = progress.isIncremental ? 'New photos' : 'Indexing';
+    return `${type}: ${progress.current} / ${progress.total}`;
+  }
+  if (stats.indexed > 0) return `${stats.indexed} images indexed`;
+  return 'Type to search your gallery';
+};
 
   return (
     <SafeAreaView style={styles.container}>
