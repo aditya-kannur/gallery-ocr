@@ -7,7 +7,6 @@ let db: SQLite.SQLiteDatabase;
 export async function initDatabase(): Promise<void> {
   db = await SQLite.openDatabaseAsync(DB_NAME);
 
-  // images table — tracks every photo we've seen
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,7 +19,6 @@ export async function initDatabase(): Promise<void> {
     );
   `);
 
-  // FTS5 virtual table — this is what makes search instant
   await db.execAsync(`
     CREATE VIRTUAL TABLE IF NOT EXISTS ocr_text
     USING fts5(
@@ -29,6 +27,9 @@ export async function initDatabase(): Promise<void> {
       tokenize = 'unicode61'
     );
   `);
+
+  // add this line
+  await initHistoryTable();
 }
 
 // Save a new image record (before OCR runs)
@@ -166,4 +167,47 @@ export async function getLastIndexedTime(): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+// Create history table — call inside initDatabase
+export async function initHistoryTable(): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS search_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT UNIQUE NOT NULL,
+      searched_at INTEGER NOT NULL
+    );
+  `);
+}
+
+// Save a search query — if exists just update timestamp
+export async function saveSearchQuery(query: string): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO search_history (query, searched_at)
+     VALUES (?, ?)`,
+    [query.trim(), Date.now()]
+  );
+}
+
+// Get last 10 searches, most recent first
+export async function getSearchHistory(): Promise<string[]> {
+  const rows = await db.getAllAsync<{ query: string }>(
+    `SELECT query FROM search_history
+     ORDER BY searched_at DESC
+     LIMIT 10`
+  );
+  return rows.map(r => r.query);
+}
+
+// Delete one history item
+export async function deleteSearchQuery(query: string): Promise<void> {
+  await db.runAsync(
+    `DELETE FROM search_history WHERE query = ?`,
+    [query.trim()]
+  );
+}
+
+// Clear all history
+export async function clearSearchHistory(): Promise<void> {
+  await db.execAsync(`DELETE FROM search_history;`);
 }

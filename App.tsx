@@ -3,19 +3,18 @@ import {
   View, Text, TextInput, StyleSheet,
   SafeAreaView, TouchableOpacity, Platform
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { initDatabase, searchImages, getIndexStats, getTextForImage, SearchResult } from './app/lib/database';
+import { Ionicons } from '@expo/vector-icons';
+import { initDatabase, searchImages, getIndexStats, getTextForImage, SearchResult, saveSearchQuery, getSearchHistory, deleteSearchQuery, clearSearchHistory } from './app/lib/database';
 import { indexGallery, IndexingProgress } from './app/lib/ocr';
 import ImageGrid from './app/components/ImageGrid';
 import ImageViewer from './app/components/ImageViewer';
 import SettingsScreen from './app/components/SettingsScreen';
+import SearchHistory from './app/components/SearchHistory';
+import EmptyState from './app/components/EmptyState';
 
 const Tab = createBottomTabNavigator();
-
-// Shared progress state lives here so both tabs can see it
-let globalProgressCallback: ((p: IndexingProgress) => void) | null = null;
 
 function SearchTab() {
   const [query, setQuery] = useState('');
@@ -24,12 +23,15 @@ function SearchTab() {
   const [stats, setStats] = useState({ total: 0, indexed: 0 });
   const [selectedUri, setSelectedUri] = useState<string | null>(null);
   const [selectedText, setSelectedText] = useState('');
+  const [history, setHistory] = useState<string[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     async function setup() {
       await initDatabase();
       const s = await getIndexStats();
       setStats(s);
+      loadHistory();
 
       if (Platform.OS !== 'web') {
         indexGallery((p) => {
@@ -44,9 +46,28 @@ function SearchTab() {
     setup().catch(console.error);
   }, []);
 
+  async function loadHistory() {
+    const h = await getSearchHistory();
+    setHistory(h);
+  }
+
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); return; }
-    searchImages(query).then(setResults).catch(console.error);
+    if (query.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    searchImages(query)
+      .then(setResults)
+      .catch(console.error)
+      .finally(() => setIsSearching(false));
+
+    const timer = setTimeout(() => {
+      saveSearchQuery(query).then(loadHistory);
+    }, 1000);
+
+    return () => clearTimeout(timer);
   }, [query]);
 
   async function handleImagePress(uri: string) {
@@ -55,15 +76,30 @@ function SearchTab() {
     setSelectedUri(uri);
   }
 
-const statusText = () => {
-  if (progress) {
-    if (progress.total === 0) return 'Checking for new photos...';
-    const type = progress.isIncremental ? 'New photos' : 'Indexing';
-    return `${type}: ${progress.current} / ${progress.total}`;
+  async function handleDeleteHistory(q: string) {
+    await deleteSearchQuery(q);
+    loadHistory();
   }
-  if (stats.indexed > 0) return `${stats.indexed} images indexed`;
-  return 'Type to search your gallery';
-};
+
+  async function handleClearHistory() {
+    await clearSearchHistory();
+    setHistory([]);
+  }
+
+  const showHistory = query.length === 0 && history.length > 0;
+  const showEmpty = query.length >= 2 && !isSearching && results.length === 0;
+  const showNoQuery = query.length === 0 && history.length === 0 && stats.indexed > 0;
+  const showNotIndexed = stats.indexed === 0 && !progress;
+
+  const statusText = () => {
+    if (progress) {
+      if (progress.total === 0) return 'Checking for new photos...';
+      const type = progress.isIncremental ? 'New photos' : 'Indexing';
+      return `${type}: ${progress.current} / ${progress.total}`;
+    }
+    if (stats.indexed > 0) return `${stats.indexed} images indexed`;
+    return 'Setting up...';
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -88,11 +124,29 @@ const statusText = () => {
 
       {progress && (
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${(progress.current / progress.total) * 100}%` }]} />
+          <View style={[
+            styles.progressFill,
+            { width: `${(progress.current / progress.total) * 100}%` }
+          ]} />
         </View>
       )}
 
-      <ImageGrid results={results} query={query} onPress={handleImagePress} />
+      {showHistory && (
+        <SearchHistory
+          history={history}
+          onSelect={(q) => setQuery(q)}
+          onDelete={handleDeleteHistory}
+          onClearAll={handleClearHistory}
+        />
+      )}
+
+      {showNoQuery && <EmptyState type="no-query" />}
+      {showNotIndexed && <EmptyState type="not-indexed" />}
+      {showEmpty && <EmptyState type="no-results" query={query} />}
+
+      {results.length > 0 && (
+        <ImageGrid results={results} query={query} onPress={handleImagePress} />
+      )}
 
       <ImageViewer
         uri={selectedUri}
@@ -107,30 +161,23 @@ export default function App() {
   return (
     <NavigationContainer>
       <Tab.Navigator
-  screenOptions={({ route }) => ({
-    headerShown: false,
-    tabBarStyle: { backgroundColor: '#111', borderTopColor: '#222' },
-    tabBarActiveTintColor: '#a89ff5',
-    tabBarInactiveTintColor: '#555',
-    tabBarIcon: ({ focused, color, size }) => {
-      if (route.name === 'Search') {
-        return <Ionicons name={focused ? 'search' : 'search-outline'} size={size} color={color} />;
-      }
-      if (route.name === 'Settings') {
-        return <Ionicons name={focused ? 'settings' : 'settings-outline'} size={size} color={color} />;
-      }
-    },
-  })}
->
-        <Tab.Screen
-          name="Search"
-          component={SearchTab}
-          options={{ tabBarLabel: 'Search' }}
-        />
-        <Tab.Screen
-          name="Settings"
-          options={{ tabBarLabel: 'Settings' }}
-        >
+        screenOptions={({ route }) => ({
+          headerShown: false,
+          tabBarStyle: { backgroundColor: '#111', borderTopColor: '#222' },
+          tabBarActiveTintColor: '#a89ff5',
+          tabBarInactiveTintColor: '#555',
+          tabBarIcon: ({ focused, color, size }) => {
+            if (route.name === 'Search') {
+              return <Ionicons name={focused ? 'search' : 'search-outline'} size={size} color={color} />;
+            }
+            if (route.name === 'Settings') {
+              return <Ionicons name={focused ? 'settings' : 'settings-outline'} size={size} color={color} />;
+            }
+          },
+        })}
+      >
+        <Tab.Screen name="Search" component={SearchTab} />
+        <Tab.Screen name="Settings">
           {() => <SettingsScreen onReindexStart={() => {}} />}
         </Tab.Screen>
       </Tab.Navigator>
