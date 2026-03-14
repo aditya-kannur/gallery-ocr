@@ -1,104 +1,128 @@
 import * as MediaLibrary from 'expo-media-library';
 import * as ImageManipulator from 'expo-image-manipulator';
 import TextRecognition from '@react-native-ml-kit/text-recognition';
-import { insertImage, saveOcrResult, isIndexed, getIndexStats } from './database';
+import {
+  insertImage, saveOcrResult, isIndexed,
+  setLastIndexedTime, getLastIndexedTime
+} from './database';
 
-// How many images to OCR in one batch
 const BATCH_SIZE = 10;
 
 export type IndexingProgress = {
   current: number;
   total: number;
   done: boolean;
+  isIncremental: boolean; // true = only new photos, false = full scan
 };
 
-// Main function — call this to index the whole gallery
-// onProgress fires after each image so you can update the UI
-export async function indexGallery(
-  onProgress: (progress: IndexingProgress) => void
-): Promise<void> {
-  // 1. Ask for gallery permission
+async function requestPermission(): Promise<boolean> {
   const { status } = await MediaLibrary.requestPermissionsAsync();
-  if (status !== 'granted') {
-    console.warn('Gallery permission denied');
-    return;
-  }
+  return status === 'granted';
+}
 
-  // 2. Fetch all photos from device
+async function fetchAssetsSince(since: number): Promise<MediaLibrary.Asset[]> {
   let after: string | undefined = undefined;
-  let allAssets: MediaLibrary.Asset[] = [];
+  let assets: MediaLibrary.Asset[] = [];
 
-  // MediaLibrary returns photos in pages — we loop until we have all of them
   while (true) {
     const page = await MediaLibrary.getAssetsAsync({
       mediaType: 'photo',
-      first: 100,           // fetch 100 at a time
+      first: 100,
       after,
       sortBy: MediaLibrary.SortBy.creationTime,
+      createdAfter: since > 0 ? since : undefined,
     });
 
-    allAssets = allAssets.concat(page.assets);
-
+    assets = assets.concat(page.assets);
     if (!page.hasNextPage) break;
     after = page.endCursor;
   }
 
-  const total = allAssets.length;
+  return assets;
+}
+
+async function processAsset(asset: MediaLibrary.Asset): Promise<void> {
+  // Skip if already indexed
+  const alreadyDone = await isIndexed(asset.uri);
+  if (alreadyDone) return;
+
+  // Save image record first
+  const imageId = await insertImage(asset.uri, asset.filename, asset.creationTime);
+  if (imageId === -1) return;
+
+  // Downscale before OCR
+  const resized = await ImageManipulator.manipulateAsync(
+    asset.uri,
+    [{ resize: { width: 1000 } }],
+    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+  );
+
+  // Run OCR
+  const result = await TextRecognition.recognize(resized.uri);
+
+  // Flatten text blocks
+  const fullText = result.blocks
+    .map(block => block.text)
+    .join(' ')
+    .toLowerCase()
+    .trim();
+
+  await saveOcrResult(imageId, asset.uri, fullText);
+}
+
+// Main export — call this on every app open
+// Automatically decides full scan vs incremental
+export async function indexGallery(
+  onProgress: (progress: IndexingProgress) => void
+): Promise<void> {
+  const hasPermission = await requestPermission();
+  if (!hasPermission) {
+    console.warn('Gallery permission denied');
+    return;
+  }
+
+  const lastIndexedAt = await getLastIndexedTime();
+  const isIncremental = lastIndexedAt > 0;
+
+  // Fetch only new photos if we've indexed before
+  const assets = await fetchAssetsSince(lastIndexedAt);
+
+  if (assets.length === 0) {
+    // Nothing new — report done immediately
+    onProgress({ current: 0, total: 0, done: true, isIncremental });
+    return;
+  }
+
+  const total = assets.length;
   let current = 0;
 
-  // 3. Process in batches so we don't freeze the app
-  for (let i = 0; i < allAssets.length; i += BATCH_SIZE) {
-    const batch = allAssets.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < assets.length; i += BATCH_SIZE) {
+    const batch = assets.slice(i, i + BATCH_SIZE);
 
     await Promise.all(
       batch.map(async (asset) => {
         try {
-          // Skip if already indexed
-          const alreadyDone = await isIndexed(asset.uri);
-          if (alreadyDone) {
-            current++;
-            return;
-          }
-
-          // Save image to DB first
-          const imageId = await insertImage(asset.uri, asset.filename, asset.creationTime);
-          if (imageId === -1) {
-            current++;
-            return;
-          }
-
-          // Downscale before OCR — huge speedup, no accuracy loss
-          const resized = await ImageManipulator.manipulateAsync(
-            asset.uri,
-            [{ resize: { width: 1200 } }],
-            { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
-          );
-
-          // Run OCR
-          const result = await TextRecognition.recognize(resized.uri);
-
-          // Flatten all detected text blocks into one string
-          const fullText = result.blocks
-            .map(block => block.text)
-            .join(' ')
-            .toLowerCase()
-            .trim();
-
-          // Save result to DB
-          await saveOcrResult(imageId, asset.uri, fullText);
-
+          await processAsset(asset);
         } catch (err) {
-          // Never let one failed image stop the whole indexer
           console.warn('OCR failed for asset:', asset.filename, err);
         }
-
         current++;
       })
     );
 
-    // Report progress after each batch
-    onProgress({ current, total, done: current >= total });
+    onProgress({ current, total, done: false, isIncremental });
   }
 
-  onProgress({ current: total, total, done: true });
+  // Save current time as last indexed
+  await setLastIndexedTime(Date.now());
+  onProgress({ current: total, total, done: true, isIncremental });
+}
+
+// Force full re-index — called from settings re-index button
+export async function forceFullReIndex(
+  onProgress: (progress: IndexingProgress) => void
+): Promise<void> {
+  // Reset timestamp so fetchAssetsSince fetches everything
+  await setLastIndexedTime(0);
+  await indexGallery(onProgress);
 }

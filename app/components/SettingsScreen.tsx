@@ -4,7 +4,8 @@ import {
   TouchableOpacity, Alert, Platform
 } from 'react-native';
 import { getIndexStats, clearIndex } from '../lib/database';
-import { indexGallery, IndexingProgress } from '../lib/ocr';
+import { indexGallery, forceFullReIndex, IndexingProgress } from '../lib/ocr';
+
 
 type Props = {
   onReindexStart: (progress: IndexingProgress) => void;
@@ -40,7 +41,7 @@ export default function SettingsScreen({ onReindexStart }: Props) {
             }
             setIsReindexing(true);
             await clearIndex();
-            indexGallery((p) => {
+            forceFullReIndex((p) => {
               onReindexStart(p);
               if (p.done) {
                 setIsReindexing(false);

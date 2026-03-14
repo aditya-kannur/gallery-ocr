@@ -144,3 +144,26 @@ export async function clearIndex(): Promise<void> {
   await db.execAsync(`DELETE FROM images;`);
   await db.execAsync(`DELETE FROM ocr_text;`);
 }
+
+// Save the timestamp of when we last finished indexing
+export async function setLastIndexedTime(timestamp: number): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+  `);
+  await db.runAsync(
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed_at', ?)`,
+    [timestamp.toString()]
+  );
+}
+
+// Get the last indexed timestamp — returns 0 if never indexed before
+export async function getLastIndexedTime(): Promise<number> {
+  try {
+    const row = await db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM meta WHERE key = 'last_indexed_at'`
+    );
+    return row ? parseInt(row.value) : 0;
+  } catch {
+    return 0;
+  }
+}
