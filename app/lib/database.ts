@@ -3,7 +3,6 @@ import * as SQLite from 'expo-sqlite';
 const DB_NAME = 'gallery_ocr.db';
 let db: SQLite.SQLiteDatabase;
 
-// Call this once when the app starts
 export async function initDatabase(): Promise<void> {
   db = await SQLite.openDatabaseAsync(DB_NAME);
 
@@ -28,11 +27,13 @@ export async function initDatabase(): Promise<void> {
     );
   `);
 
-  // add this line
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+  `);
+
   await initHistoryTable();
 }
 
-// Save a new image record (before OCR runs)
 export async function insertImage(
   uri: string,
   filename: string,
@@ -42,7 +43,6 @@ export async function insertImage(
     `INSERT OR IGNORE INTO images (uri, filename, created_at) VALUES (?, ?, ?)`,
     [uri, filename, createdAt]
   );
-  // If already exists, get its id
   if (result.changes === 0) {
     const row = await db.getFirstAsync<{ id: number }>(
       `SELECT id FROM images WHERE uri = ?`, [uri]
@@ -52,7 +52,6 @@ export async function insertImage(
   return result.lastInsertRowId;
 }
 
-// After OCR runs, save extracted text + mark image as indexed
 export async function saveOcrResult(
   imageId: number,
   uri: string,
@@ -62,7 +61,6 @@ export async function saveOcrResult(
     `UPDATE images SET has_text = ?, indexed_at = ? WHERE id = ?`,
     [text.length > 0 ? 1 : 0, Date.now(), imageId]
   );
-
   if (text.length > 0) {
     await db.runAsync(
       `INSERT INTO ocr_text (image_id, text_content) VALUES (?, ?)`,
@@ -71,7 +69,6 @@ export async function saveOcrResult(
   }
 }
 
-// Check if an image was already indexed
 export async function isIndexed(uri: string): Promise<boolean> {
   const row = await db.getFirstAsync<{ indexed_at: number | null }>(
     `SELECT indexed_at FROM images WHERE uri = ?`, [uri]
@@ -84,16 +81,41 @@ export type SearchResult = {
   snippet: string;
 };
 
-// THE MAIN SEARCH — runs against FTS5, returns image URIs instantly
-export async function searchImages(query: string): Promise<SearchResult[]> {
+export type SortOption = 'newest' | 'oldest' | 'most_text';
+export type DateFilter = 'all' | 'today' | 'this_week' | 'this_month' | 'this_year';
+
+function getDateThreshold(filter: DateFilter): number {
+  const now = Date.now();
+  const day = 86400000;
+  switch (filter) {
+    case 'today':      return now - day;
+    case 'this_week':  return now - day * 7;
+    case 'this_month': return now - day * 30;
+    case 'this_year':  return now - day * 365;
+    default:           return 0;
+  }
+}
+
+export async function searchImages(
+  query: string,
+  sort: SortOption = 'newest',
+  dateFilter: DateFilter = 'all'
+): Promise<SearchResult[]> {
   if (!query.trim()) return [];
+
+  const threshold = getDateThreshold(dateFilter);
+
+  const orderBy = sort === 'newest' ? 'i.created_at DESC'
+    : sort === 'oldest' ? 'i.created_at ASC'
+    : 'length(o.text_content) DESC';
 
   const rows = await db.getAllAsync<{ uri: string; text_content: string }>(
     `SELECT i.uri, o.text_content
      FROM images i
      JOIN ocr_text o ON i.id = CAST(o.image_id AS INTEGER)
      WHERE o.text_content MATCH ?
-     ORDER BY i.created_at DESC
+     ${threshold > 0 ? 'AND i.created_at > ' + threshold : ''}
+     ORDER BY ${orderBy}
      LIMIT 50`,
     [query.trim() + '*']
   );
@@ -104,7 +126,6 @@ export async function searchImages(query: string): Promise<SearchResult[]> {
   }));
 }
 
-// Pulls ~60 chars of context around the matched word
 function extractSnippet(text: string, query: string): string {
   const lower = text.toLowerCase();
   const index = lower.indexOf(query.toLowerCase().trim());
@@ -114,7 +135,6 @@ function extractSnippet(text: string, query: string): string {
   return (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
 }
 
-// How many images have been indexed so far
 export async function getIndexStats(): Promise<{ total: number; indexed: number }> {
   const total = await db.getFirstAsync<{ count: number }>(
     `SELECT COUNT(*) as count FROM images`
@@ -128,7 +148,6 @@ export async function getIndexStats(): Promise<{ total: number; indexed: number 
   };
 }
 
-// Get the OCR text for a specific image URI
 export async function getTextForImage(uri: string): Promise<string> {
   const row = await db.getFirstAsync<{ text_content: string }>(
     `SELECT o.text_content
@@ -140,24 +159,18 @@ export async function getTextForImage(uri: string): Promise<string> {
   return row?.text_content ?? '';
 }
 
-// Wipes all indexed data so re-indexing starts fresh
 export async function clearIndex(): Promise<void> {
   await db.execAsync(`DELETE FROM images;`);
   await db.execAsync(`DELETE FROM ocr_text;`);
 }
 
-// Save the timestamp of when we last finished indexing
 export async function setLastIndexedTime(timestamp: number): Promise<void> {
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-  `);
   await db.runAsync(
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed_at', ?)`,
     [timestamp.toString()]
   );
 }
 
-// Get the last indexed timestamp — returns 0 if never indexed before
 export async function getLastIndexedTime(): Promise<number> {
   try {
     const row = await db.getFirstAsync<{ value: string }>(
@@ -169,8 +182,7 @@ export async function getLastIndexedTime(): Promise<number> {
   }
 }
 
-// Create history table — call inside initDatabase
-export async function initHistoryTable(): Promise<void> {
+async function initHistoryTable(): Promise<void> {
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS search_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,26 +192,20 @@ export async function initHistoryTable(): Promise<void> {
   `);
 }
 
-// Save a search query — if exists just update timestamp
 export async function saveSearchQuery(query: string): Promise<void> {
   await db.runAsync(
-    `INSERT OR REPLACE INTO search_history (query, searched_at)
-     VALUES (?, ?)`,
+    `INSERT OR REPLACE INTO search_history (query, searched_at) VALUES (?, ?)`,
     [query.trim(), Date.now()]
   );
 }
 
-// Get last 10 searches, most recent first
 export async function getSearchHistory(): Promise<string[]> {
   const rows = await db.getAllAsync<{ query: string }>(
-    `SELECT query FROM search_history
-     ORDER BY searched_at DESC
-     LIMIT 10`
+    `SELECT query FROM search_history ORDER BY searched_at DESC LIMIT 10`
   );
   return rows.map(r => r.query);
 }
 
-// Delete one history item
 export async function deleteSearchQuery(query: string): Promise<void> {
   await db.runAsync(
     `DELETE FROM search_history WHERE query = ?`,
@@ -207,7 +213,6 @@ export async function deleteSearchQuery(query: string): Promise<void> {
   );
 }
 
-// Clear all history
 export async function clearSearchHistory(): Promise<void> {
   await db.execAsync(`DELETE FROM search_history;`);
 }

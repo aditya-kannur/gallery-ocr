@@ -6,13 +6,19 @@ import {
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { initDatabase, searchImages, getIndexStats, getTextForImage, SearchResult, saveSearchQuery, getSearchHistory, deleteSearchQuery, clearSearchHistory } from './app/lib/database';
+import {
+  initDatabase, searchImages, getIndexStats, getTextForImage,
+  SearchResult, saveSearchQuery, getSearchHistory,
+  deleteSearchQuery, clearSearchHistory,
+  SortOption, DateFilter
+} from './app/lib/database';
 import { indexGallery, IndexingProgress } from './app/lib/ocr';
 import ImageGrid from './app/components/ImageGrid';
 import ImageViewer from './app/components/ImageViewer';
 import SettingsScreen from './app/components/SettingsScreen';
 import SearchHistory from './app/components/SearchHistory';
 import EmptyState from './app/components/EmptyState';
+import SortFilterBar from './app/components/SortFilterBar';
 
 const Tab = createBottomTabNavigator();
 
@@ -25,6 +31,8 @@ function SearchTab() {
   const [selectedText, setSelectedText] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [sort, setSort] = useState<SortOption>('newest');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
 
   useEffect(() => {
     async function setup() {
@@ -58,7 +66,7 @@ function SearchTab() {
     }
 
     setIsSearching(true);
-    searchImages(query)
+    searchImages(query, sort, dateFilter)
       .then(setResults)
       .catch(console.error)
       .finally(() => setIsSearching(false));
@@ -68,7 +76,7 @@ function SearchTab() {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, sort, dateFilter]);
 
   async function handleImagePress(uri: string) {
     const text = await getTextForImage(uri);
@@ -129,6 +137,15 @@ function SearchTab() {
             { width: `${(progress.current / progress.total) * 100}%` }
           ]} />
         </View>
+      )}
+
+      {results.length > 0 && (
+        <SortFilterBar
+          sort={sort}
+          dateFilter={dateFilter}
+          onSortChange={setSort}
+          onDateFilterChange={setDateFilter}
+        />
       )}
 
       {showHistory && (
