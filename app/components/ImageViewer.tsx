@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import {
   Modal, View, Text, Image, ScrollView,
   TouchableOpacity, StyleSheet, SafeAreaView,
-  Dimensions, Share, Platform
+  Dimensions, Share, Platform, Clipboard
 } from 'react-native';
+import Toast from './Toast';
 
 type Props = {
   uri: string | null;
@@ -13,28 +15,37 @@ type Props = {
 const { width } = Dimensions.get('window');
 
 export default function ImageViewer({ uri, extractedText, onClose }: Props) {
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
   if (!uri) return null;
+
+  function showToast(msg: string) {
+    setToastMessage(msg);
+    setToastVisible(true);
+    setTimeout(() => setToastVisible(false), 2000);
+  }
 
   async function handleShare() {
     try {
       if (Platform.OS === 'web') return;
       await Share.share({
-        url: uri!,
+        url: uri ?? undefined,
         message: extractedText.trim().length > 0
           ? `Text found in image:\n\n${extractedText}`
           : 'Shared from Gallery OCR',
       });
     } catch (err) {
-      console.warn('Share failed', err);
+      showToast('Share failed');
     }
   }
 
-  async function handleCopyText() {
+  function handleCopyText() {
     try {
-      const Clipboard = await import('expo-clipboard');
-      await Clipboard.setStringAsync(extractedText);
+      Clipboard.setString(extractedText);
+      showToast('Text copied');
     } catch {
-      console.warn('Copy not available');
+      showToast('Copy failed');
     }
   }
 
@@ -71,6 +82,8 @@ export default function ImageViewer({ uri, extractedText, onClose }: Props) {
             </Text>
           </View>
         </ScrollView>
+
+        <Toast message={toastMessage} visible={toastVisible} />
 
       </SafeAreaView>
     </Modal>
