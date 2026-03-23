@@ -1,6 +1,7 @@
 import {
   Modal, View, Text, Image, ScrollView,
-  TouchableOpacity, StyleSheet, SafeAreaView, Dimensions
+  TouchableOpacity, StyleSheet, SafeAreaView,
+  Dimensions, Share, Platform
 } from 'react-native';
 
 type Props = {
@@ -14,30 +15,55 @@ const { width } = Dimensions.get('window');
 export default function ImageViewer({ uri, extractedText, onClose }: Props) {
   if (!uri) return null;
 
+  async function handleShare() {
+    try {
+      if (Platform.OS === 'web') return;
+      await Share.share({
+        url: uri!,
+        message: extractedText.trim().length > 0
+          ? `Text found in image:\n\n${extractedText}`
+          : 'Shared from Gallery OCR',
+      });
+    } catch (err) {
+      console.warn('Share failed', err);
+    }
+  }
+
+  async function handleCopyText() {
+    try {
+      const Clipboard = await import('expo-clipboard');
+      await Clipboard.setStringAsync(extractedText);
+    } catch {
+      console.warn('Copy not available');
+    }
+  }
+
   return (
     <Modal visible={!!uri} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.container}>
 
-        {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-            <Text style={styles.closeText}>✕</Text>
+          <TouchableOpacity onPress={onClose} style={styles.iconBtn}>
+            <Text style={styles.iconText}>✕</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Image Text</Text>
-          <View style={{ width: 36 }} />
+          <TouchableOpacity onPress={handleShare} style={styles.iconBtn}>
+            <Text style={styles.shareText}>Share</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView>
-          {/* Full image */}
-          <Image
-            source={{ uri }}
-            style={styles.image}
-            resizeMode="contain"
-          />
+          <Image source={{ uri }} style={styles.image} resizeMode="contain" />
 
-          {/* Extracted text */}
           <View style={styles.textCard}>
-            <Text style={styles.textLabel}>Text found in this image</Text>
+            <View style={styles.textCardHeader}>
+              <Text style={styles.textLabel}>Text found in image</Text>
+              {extractedText.trim().length > 0 && (
+                <TouchableOpacity onPress={handleCopyText}>
+                  <Text style={styles.copyBtn}>Copy</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <Text style={styles.extractedText}>
               {extractedText.trim().length > 0
                 ? extractedText
@@ -62,8 +88,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
-  closeBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  closeText: { color: '#888', fontSize: 18 },
+  iconBtn: { width: 52, height: 36, alignItems: 'center', justifyContent: 'center' },
+  iconText: { color: '#888', fontSize: 18 },
+  shareText: { color: '#a89ff5', fontSize: 14 },
   headerTitle: { color: '#fff', fontSize: 16, fontWeight: '500' },
   image: { width, height: width, backgroundColor: '#111' },
   textCard: {
@@ -74,6 +101,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2a2a2a',
   },
-  textLabel: { color: '#555', fontSize: 12, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 },
+  textCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  textLabel: { color: '#555', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
+  copyBtn: { color: '#a89ff5', fontSize: 12 },
   extractedText: { color: '#ccc', fontSize: 15, lineHeight: 24 },
 });
