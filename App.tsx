@@ -19,6 +19,7 @@ import SettingsScreen from './app/components/SettingsScreen';
 import SearchHistory from './app/components/SearchHistory';
 import EmptyState from './app/components/EmptyState';
 import SortFilterBar from './app/components/SortFilterBar';
+import ErrorBoundary from './app/components/ErrorBoundary';
 
 const Tab = createBottomTabNavigator();
 
@@ -176,6 +177,7 @@ function SearchTab() {
 
 export default function App() {
   return (
+        <ErrorBoundary>
     <NavigationContainer>
       <Tab.Navigator
         screenOptions={({ route }) => ({
@@ -199,6 +201,8 @@ export default function App() {
         </Tab.Screen>
       </Tab.Navigator>
     </NavigationContainer>
+        </ErrorBoundary>
+
   );
 }
 
