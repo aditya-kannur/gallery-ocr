@@ -4,6 +4,14 @@
   "description": "SDK for gallery-ocr",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "ocr",
+    "gallery",
+    "react-native"
+  ],
   "scripts": {
     "build": "tsc"
   },
