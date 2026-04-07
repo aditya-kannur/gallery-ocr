@@ -15,5 +15,6 @@ export { extractMedicalRx } from './domains/medical-rx/extractor';
 export type { MedicalRx } from './domains/medical-rx/types';
 export { extractLogistics } from './domains/logistics/extractor';
 export type { LogisticsShipment } from './domains/logistics/types';
+export { classifyDocument } from './core/classifier';
 
 export { GalleryOcr } from './core/GalleryOcr';
