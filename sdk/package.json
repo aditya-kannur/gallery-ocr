@@ -1,19 +1,16 @@
 {
-  "name": "gallery-ocr-sdk",
+  "name": "@aditya/gallery-ocr-sdk",
   "version": "1.0.0",
-  "description": "SDK for gallery-ocr",
+  "description": "OCR text extraction SDK with GST, medical and logistics domain support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
-  "keywords": [
-    "ocr",
-    "gallery",
-    "react-native"
-  ],
+  "files": ["dist"],
+  "keywords": ["ocr", "gallery", "gst", "medical", "logistics", "react-native"],
+  "author": "aditya-kannur",
+  "license": "MIT",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {},
   "devDependencies": {
